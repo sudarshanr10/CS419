@@ -1,0 +1,67 @@
+#!/usr/bin/python3
+import sys
+import os
+import struct
+
+def lcg(seed, a=1103515245, c=12345, m=256):
+    while True:
+        seed = (a * seed + c) % m
+        yield seed
+
+def sdbm_hash(s):
+    hash = 0
+    for c in s:
+        hash = ord(c) + (hash << 6) + (hash << 16) - hash
+    return hash & 0xffffffffffffffff
+
+def xor_with_keystream(data, seed):
+    keystream = lcg(seed)
+    return bytes([b ^ next(keystream) for b in data])
+
+def encrypt(inputFilePath, outputFilePath, password):
+    if not os.path.exists(inputFilePath):
+        print(f"File {inputFilePath} does not exist!")
+        return
+    
+    with open(inputFilePath, 'rb') as inputFile, open(outputFilePath, 'wb') as outputFile:
+        iv = os.urandom(8)
+        seed = sdbm_hash(password) ^ struct.unpack("<Q", iv)[0]
+        outputFile.write(iv)
+        while True:
+            chunk = inputFile.read(1024)
+            if not chunk:
+                break
+        encryptedChunk = xor_with_keystream(chunk, seed)
+        outputFile.write(encryptedChunk)
+
+def decrypt(inputFilePath, outputFilePath, password):
+    if not os.path.exists(inputFilePath):
+        print(f"File {inputFilePath} does not exist!")
+        return
+    with open(inputFilePath, 'rb') as inputFile, open(outputFilePath, 'wb') as outputFile:
+        iv = inputFile.read(8)  # Read the IV from the input file
+        seed = sdbm_hash(password) ^ struct.unpack('<Q', iv)[0]  # Incorporate IV into the seed
+        while True:
+            chunk = inputFile.read(1024)
+            if not chunk:
+                break
+            decryptedChunk = xor_with_keystream(chunk, seed)
+            outputFile.write(decryptedChunk)
+
+def main():
+    if len(sys.argv) != 5:
+        print("Usage: vcrypt -e password plaintext ciphertext")
+        print("       vcrypt -d password ciphertext plaintext")
+        sys.exit(1)
+
+    mode, password, inputPath, outputPath = sys.argv[1:]
+    if mode == '-e':
+        encrypt(inputPath, outputPath, password)
+    elif mode == '-d':
+        decrypt(inputPath, outputPath, password)
+    else:
+        print("Invalid mode. Use -e for encrypt or -d for decrypt.")
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main()

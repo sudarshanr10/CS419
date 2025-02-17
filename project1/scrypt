@@ -1,0 +1,44 @@
+#!/usr/bin/python3
+import sys
+import os
+
+def lcg(seed, a = 1103515245, c = 12345, m = 256):
+    while True:
+        seed = (a * seed + c) % m
+        yield seed
+    
+def sdbm_hash(s):
+    hash = 0
+    for c in s:
+        hash = ord(c) + (hash << 6) + (hash << 16) - hash
+    return hash & 0xffffffffffffffff
+
+def xor_with_keystream(data, seed):
+    keystream = lcg(seed)
+    return bytes([b ^ next(keystream) for b in data])
+
+def process_file(inputFilePath, outputFilePath, password):
+    if not os.path.exists(inputFilePath):
+        print(f"File {inputFilePath} does not exist!")
+        return
+    
+    with open(inputFilePath, 'rb') as inputFile, open(outputFilePath, 'wb') as outputFile:
+        seed = sdbm_hash(password)
+        while True:
+            chunk = inputFile.read(1024)
+            if not chunk:
+                break
+            encryptedChunk = xor_with_keystream(chunk, seed)
+            outputFile.write(encryptedChunk)
+               
+def main():
+    if len(sys.argv) != 5:
+        print("Usage: scrypt password plaintext ciphertext")
+        print("       scrypt password ciphertext plaintext")
+        sys.exit(1)
+    
+    _, password, inputPath, outputPath = sys.argv[1:]
+    process_file(inputPath, outputPath, password)
+
+if __name__ == "__main__":
+    main()
