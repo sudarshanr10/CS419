@@ -4,6 +4,8 @@ import os
 import struct
 
 def sdbm_hash(s):
+    if not isinstance(s, str) or len(s) == 0:
+        raise ValueError("Error: Password must be a non-empty string!")
     hash = 0
     for c in s:
         hash = ord(c) + (hash << 6) + (hash << 16) - hash
@@ -11,7 +13,7 @@ def sdbm_hash(s):
 
 def feistel_round(data, key):
     temp = (data ^ key) * 0x0a3b2c1
-    return (temp >> 23) | (temp << 41) & 0xffffffffffffffff
+    return ((temp >> 23) | (temp << 41)) & 0xffffffffffffffff
 
 def generate_round_keys(seed):
     keys = []
@@ -24,18 +26,24 @@ def generate_round_keys(seed):
     return keys
 
 def encrypt_block(block, keys):
+    if len(block) < 16:
+        block = block.ljust(16, b'\x00')
+    
     left, right = struct.unpack("<QQ", block)
     for key in keys:
         new_left = right
-        new_right = left ^ feistel_round(right, key)
+        new_right = (left ^ feistel_round(right, key)) & 0xffffffffffffffff
         left, right = new_left, new_right
     return struct.pack("<QQ", right, left)
 
 def decrypt_block(block, keys):
+    if len(block) < 16:
+        block = block.ljust(16, b'\x00')
+
     right, left = struct.unpack("<QQ", block)
     for key in reversed(keys):
         new_right = left
-        new_left = right ^ feistel_round(left, key)
+        new_left = (right ^ feistel_round(left, key)) & 0xffffffffffffffff
         right, left = new_right, new_left
     return struct.pack('<QQ', left, right)
 
@@ -44,31 +52,60 @@ def pad(data):
     return data + bytes([padding_length] * padding_length)
 
 def unpad(data):
+    if len(data) == 0:
+        return data  
+
     padding_length = data[-1]
+    if padding_length < 1 or padding_length > 16:
+        return data
+    if data[-padding_length:] != bytes([padding_length] * padding_length):
+        return data
+
     return data[:-padding_length]
 
 def process_file(inputFilePath, outputFilePath, password, mode):
-    if not os.path.exists(inputFilePath):
-        print(f"File {inputFilePath} does not exist!")
-        return
+    try:
+        if not os.path.exists(inputFilePath):
+            raise FileNotFoundError(f"Error: File '{inputFilePath}' does not exist.")
+        if not os.path.isfile(inputFilePath):
+            raise ValueError(f"Error: '{inputFilePath}' is not a valid file.")
+        if not os.access(inputFilePath, os.R_OK):
+            raise PermissionError(f"Error: File '{inputFilePath}' cannot be read (check permissions).")
 
-    with open(inputFilePath, 'rb') as inputFile, open(outputFilePath, 'wb') as outputFile:
-        data = inputFile.read()
-        if mode == 'encrypt':
-            data = pad(data)
+        output_dir = os.path.dirname(os.path.abspath(outputFilePath))
+        if not os.access(output_dir, os.W_OK):
+            raise PermissionError(f"Error: Cannot write to directory '{output_dir}'.")
 
-        main_key = sdbm_hash(password)
-        round_keys = generate_round_keys(main_key)
+        with open(inputFilePath, 'rb') as inputFile, open(outputFilePath, 'wb') as outputFile:
+            data = inputFile.read()
+            if mode == 'encrypt' and len(data) % 16 != 0:
+                data = pad(data)
 
-        for i in range(0, len(data), 16):
-            block = data[i:i+16]
-            if mode == 'encrypt':
-                outputFile.write(encrypt_block(block, round_keys))
-            else:
-                decrypted_block = decrypt_block(block, round_keys)
-                if i + 16 >= len(data):
-                    decrypted_block = unpad(decrypted_block)
-                outputFile.write(decrypted_block)
+            main_key = sdbm_hash(password)
+            round_keys = generate_round_keys(main_key)
+            output_data = b""
+            for i in range(0, len(data), 16):
+                block = data[i:i+16]
+                if mode == 'encrypt':
+                    output_data += encrypt_block(block, round_keys)
+                else:
+                    output_data += decrypt_block(block, round_keys)
+
+            if mode == 'decrypt':
+                output_data = unpad(output_data)
+
+            outputFile.write(output_data)
+
+        print(f"Success: {mode.capitalize()}ed '{inputFilePath}' -> '{outputFilePath}'")
+
+    except ValueError as ve:
+        print(f"Error: {ve}")
+    except FileNotFoundError as fe:
+        print(f"Error: {fe}")
+    except PermissionError as pe:
+        print(f"Error: {pe}")
+    except Exception as e:
+        print(f"Error: An unexpected error occurred - {e}")
 
 def main():
     if len(sys.argv) != 5:
@@ -76,11 +113,17 @@ def main():
         print("       feistel -d password ciphertext plaintext")
         sys.exit(1)
 
-    mode, password, inputPath, outputPath = sys.argv[1:]
-    if mode == '-e':
-        process_file(inputPath, outputPath, password, 'encrypt')
-    elif mode == '-d':
-        process_file(inputPath, outputPath, password, 'decrypt')
+    _, mode, password, inputPath, outputPath = sys.argv
+    try:
+        if mode == '-e':
+            process_file(inputPath, outputPath, password, 'encrypt')
+        elif mode == '-d':
+            process_file(inputPath, outputPath, password, 'decrypt')
+        else:
+            raise ValueError("Invalid mode. Use '-e' for encryption or '-d' for decryption.")
+    except Exception as e:
+        print(f"Error: {e}")
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()
