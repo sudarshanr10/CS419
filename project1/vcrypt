@@ -9,6 +9,8 @@ def lcg(seed, a=1103515245, c=12345, m=256):
         yield seed
 
 def sdbm_hash(s):
+    if not isinstance(s, str) or len(s) == 0:
+        raise ValueError("Password must be a non-empty string!")
     hash = 0
     for c in s:
         hash = ord(c) + (hash << 6) + (hash << 16) - hash
@@ -19,34 +21,66 @@ def xor_with_keystream(data, seed):
     return bytes([b ^ next(keystream) for b in data])
 
 def encrypt(inputFilePath, outputFilePath, password):
-    if not os.path.exists(inputFilePath):
-        print(f"File {inputFilePath} does not exist!")
-        return
-    
-    with open(inputFilePath, 'rb') as inputFile, open(outputFilePath, 'wb') as outputFile:
-        iv = os.urandom(8)
-        seed = sdbm_hash(password) ^ struct.unpack("<Q", iv)[0]
-        outputFile.write(iv)
-        while True:
-            chunk = inputFile.read(1024)
-            if not chunk:
-                break
-        encryptedChunk = xor_with_keystream(chunk, seed)
-        outputFile.write(encryptedChunk)
+    try:
+        if not os.path.exists(inputFilePath):
+            raise FileNotFoundError(f"File '{inputFilePath}' does not exist!")
+        if not os.path.isfile(inputFilePath):
+            raise ValueError(f"'{inputFilePath}' is not a valid file!")
+        if not os.access(inputFilePath, os.R_OK):
+            raise PermissionError(f"File '{inputFilePath}' cannot be read (check permissions)!")
+
+        output_dir = os.path.dirname(os.path.abspath(outputFilePath))
+        if not os.access(output_dir, os.W_OK):
+            raise PermissionError(f"Cannot write to directory '{output_dir}'!")
+
+        with open(inputFilePath, 'rb') as inputFile, open(outputFilePath, 'wb') as outputFile:
+            iv = os.urandom(8)
+            seed = sdbm_hash(password) ^ struct.unpack("<Q", iv)[0]
+            outputFile.write(iv)
+            while True:
+                chunk = inputFile.read(1024)
+                if not chunk:
+                    break
+                encryptedChunk = xor_with_keystream(chunk, seed)
+                outputFile.write(encryptedChunk)
+
+        print(f"Success: Encrypted '{inputFilePath}' -> '{outputFilePath}'")
+
+    except Exception as e:
+        raise RuntimeError(f"Encryption failed: {e}")
+
 
 def decrypt(inputFilePath, outputFilePath, password):
-    if not os.path.exists(inputFilePath):
-        print(f"File {inputFilePath} does not exist!")
-        return
-    with open(inputFilePath, 'rb') as inputFile, open(outputFilePath, 'wb') as outputFile:
-        iv = inputFile.read(8)  # Read the IV from the input file
-        seed = sdbm_hash(password) ^ struct.unpack('<Q', iv)[0]  # Incorporate IV into the seed
-        while True:
-            chunk = inputFile.read(1024)
-            if not chunk:
-                break
-            decryptedChunk = xor_with_keystream(chunk, seed)
-            outputFile.write(decryptedChunk)
+    try:
+        if not os.path.exists(inputFilePath):
+            raise FileNotFoundError(f"File '{inputFilePath}' does not exist.")
+        if not os.path.isfile(inputFilePath):
+            raise ValueError(f"'{inputFilePath}' is not a valid file.")
+        if not os.access(inputFilePath, os.R_OK):
+            raise PermissionError(f"File '{inputFilePath}' cannot be read (check permissions).")
+
+        output_dir = os.path.dirname(os.path.abspath(outputFilePath))
+        if not os.access(output_dir, os.W_OK):
+            raise PermissionError(f"Cannot write to directory '{output_dir}'.")
+
+        with open(inputFilePath, 'rb') as inputFile, open(outputFilePath, 'wb') as outputFile:
+            iv = inputFile.read(8)
+            if len(iv) < 8:
+                raise ValueError(f"Error: IV missing or corrupted in '{inputFilePath}'. Decryption aborted.")
+
+            seed = sdbm_hash(password) ^ struct.unpack('<Q', iv)[0]
+            while True:
+                chunk = inputFile.read(1024)
+                if not chunk:
+                    break
+                decryptedChunk = xor_with_keystream(chunk, seed)
+                outputFile.write(decryptedChunk)
+
+        print(f"Success: Decrypted '{inputFilePath}' -> '{outputFilePath}'")
+
+    except Exception as e:
+        raise RuntimeError(f"Decryption failed: {e}")
+
 
 def main():
     if len(sys.argv) != 5:
@@ -54,13 +88,16 @@ def main():
         print("       vcrypt -d password ciphertext plaintext")
         sys.exit(1)
 
-    mode, password, inputPath, outputPath = sys.argv[1:]
-    if mode == '-e':
-        encrypt(inputPath, outputPath, password)
-    elif mode == '-d':
-        decrypt(inputPath, outputPath, password)
-    else:
-        print("Invalid mode. Use -e for encrypt or -d for decrypt.")
+    _, mode, password, inputPath, outputPath = sys.argv
+    try:
+        if mode == '-e':
+            encrypt(inputPath, outputPath, password)
+        elif mode == '-d':
+            decrypt(inputPath, outputPath, password)
+        else:
+            raise ValueError("Invalid mode. Use '-e' for encryption or '-d' for decryption.")
+    except Exception as e:
+        print(f"Error: {e}")
         sys.exit(1)
 
 if __name__ == "__main__":
