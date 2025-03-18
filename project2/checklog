@@ -1,0 +1,80 @@
+#!/usr/bin/python3
+import sys
+import os
+import hashlib
+import base64
+
+def compute_hash(line):
+    hash_object = hashlib.sha256(line.encode())
+    b64_hash = base64.b64encode(hash_object.digest()).decode('utf-8')
+    return b64_hash[-24:]
+
+def validate_log():
+    if len(sys.argv) != 1:
+        print("Error: This checklog program does not accept any arguments.")
+        sys.exit(1)
+    
+    if not os.path.exists("log.txt"):
+        print("Error: The log file 'log.txt' could not be found. Please verify that it exists.")
+        sys.exit(1)
+    if not os.path.exists("loghead.txt"):
+        print("Error: The head pointer file 'loghead.txt' is missing. Please ensure it is present.")
+        sys.exit(1)
+    
+    try:
+        with open("log.txt", "r") as f:
+            lines = f.readlines()
+    except Exception as e:
+        print(f"Error: An unexpected error occurred while reading 'log.txt': {e}")
+        sys.exit(1)
+    
+    if not lines:
+        print("Error: The log file 'log.txt' is empty. There are no entries to validate.")
+        sys.exit(1)
+    
+    first_line = lines[0].rstrip('\n')
+    try:
+        timestamp, remainder = first_line.split(" - ", 1)
+        pointer, _ = remainder.split(" ", 1)
+    except ValueError:
+        print("Error: The first log entry appears to be in an unexpected format.")
+        sys.exit(1)
+    
+    if pointer != "start":
+        print("Error: The first log entry's hash pointer is incorrect. It should be 'start'.")
+        sys.exit(1)
+    
+    for i in range(1, len(lines)):
+        prev_line = lines[i-1].rstrip('\n')
+        expected_pointer = compute_hash(prev_line)
+        
+        current_line = lines[i].rstrip('\n')
+        try:
+            timestamp, remainder = current_line.split(" - ", 1)
+            actual_pointer, _ = remainder.split(" ", 1)
+        except ValueError:
+            print(f"Error: The format of the log entry on line {i+1} is invalid.")
+            sys.exit(1)
+        
+        if actual_pointer != expected_pointer:
+            print(f"Error: Detected a hash pointer mismatch at log entry line {i}. The log may have been tampered with.")
+            sys.exit(1)
+    
+    last_line = lines[-1].rstrip('\n')
+    expected_head = compute_hash(last_line)
+    try:
+        with open("loghead.txt", "r") as f:
+            head_value = f.read().strip()
+    except Exception as e:
+        print(f"Error: An unexpected error occurred while reading 'loghead.txt': {e}")
+        sys.exit(1)
+    
+    if head_value != expected_head:
+        print(f"Error: The computed head pointer does not match the value in 'loghead.txt'. The log file might be corrupted.")
+        sys.exit(1)
+    
+    print("Valid!")
+    sys.exit(0)
+
+if __name__ == "__main__":
+    validate_log()

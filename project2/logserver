@@ -1,0 +1,91 @@
+#!/usr/bin/python3
+import socket
+import datetime
+import hashlib
+import base64
+import os
+
+def validate_proof_of_work(message):
+    try:
+        proof, message_part = message.split(':', 1)
+        test_msg = f"{proof}:{message_part}"
+        hash_object = hashlib.sha256(test_msg.encode())
+        computed_hash = hash_object.hexdigest() 
+        binary_hash = bin(int(computed_hash, 16))[2:].zfill(256)
+        print(f"Debug: PoW checking {computed_hash} with binary {binary_hash}")
+        return binary_hash.startswith('0' * 22)
+    except ValueError:
+        return False
+
+def handle_client(client_socket):
+    try:
+        with client_socket.makefile('r') as client_in, client_socket.makefile('w') as client_out:
+            message = client_in.readline().strip()
+            print(f"Received: {message}")
+
+            if not validate_proof_of_work(message):
+                client_out.write("Error: Invalid Proof of Work\n")
+                client_out.flush()
+                return
+
+            _, message = message.split(':', 1)
+            message = message.replace('\n', ' ')
+            
+            try:
+                with open("loghead.txt", "r") as head_file:
+                    last_hash = head_file.read().strip()
+            except FileNotFoundError:
+                last_hash = "start"
+            
+            timestamp = datetime.datetime.utcnow().isoformat()
+            log_entry = f"{timestamp} - {last_hash} {message}"
+            
+            hash_object = hashlib.sha256(log_entry.encode())
+            b64_hash = base64.b64encode(hash_object.digest()).decode('utf-8')
+            new_hash = b64_hash[-24:]
+
+            with open("log.txt", "a") as log_file:
+                log_file.write(log_entry + "\n")
+
+            with open("loghead.txt", "w") as head_file:
+                head_file.write(new_hash)    
+
+            response = "ok\n"
+            client_out.write(response)
+            client_out.flush()
+
+    except Exception as e:
+        print(f"logserver: {e}")
+    finally:
+        client_socket.close()
+
+def cleanup_logs():
+    if os.path.exists('log.txt'):
+        os.remove('log.txt')
+    if os.path.exists('loghead.txt'):
+        os.remove('loghead.txt')
+
+
+def start_server():
+    cleanup_logs()
+    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server_socket.bind(('0.0.0.0', 0)) 
+    server_socket.listen(5)
+
+    port = server_socket.getsockname()[1]
+    print(f"Server listening on port {port}")
+
+    if not os.path.exists('log.txt'):
+        open('log.txt', 'w').close()
+    if not os.path.exists('loghead.txt'):
+        with open('loghead.txt', 'w') as f:
+            f.write('start')
+
+    while True:
+        client_socket, addr = server_socket.accept()
+        print(f"Accepted connection from {addr}")
+        handle_client(client_socket)
+
+if __name__ == "__main__":
+    start_server()
+

@@ -1,0 +1,45 @@
+#!/usr/bin/python3
+import socket
+import sys
+import hashlib
+import base64
+
+def generate_proof_of_work(message):
+    nonce = 0
+    while True:
+        test_string = f"{nonce}:{message}"
+        res_hash = hashlib.sha256(test_string.encode()).hexdigest()
+        binary_hash = bin(int(res_hash, 16))[2:].zfill(256)
+        if binary_hash.startswith('0' * 22):
+            print(f"Valid PoW found with nonce {nonce}: {res_hash}")
+            print(f"Binary representation of hash: {binary_hash}")
+            print(f"Sending hash: {res_hash}")  
+            return f"{nonce}:{message}"
+        nonce += 1
+
+def send_string_to_server(port, message):
+    message = ' '.join(message.split())
+    try:
+        client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        client_socket.connect(('localhost', port))
+        message_with_pow = generate_proof_of_work(message)
+        print(f"Sending to server: {message_with_pow}") 
+        with client_socket.makefile('r') as server_in, client_socket.makefile('w') as server_out:
+            server_out.write(message_with_pow + "\n")
+            server_out.flush()
+            response = server_in.readline().strip()
+            print(f"Server response: {response}")
+
+    except Exception as e:
+        print(f"Error communicating with server: {e}")
+    finally:
+        client_socket.close()
+
+if __name__ == "__main__":
+    if len(sys.argv) != 3:
+        print("Usage: log <port> <message>")
+    else:
+        port = int(sys.argv[1])
+        message = sys.argv[2]
+        send_string_to_server(port, message)
+
